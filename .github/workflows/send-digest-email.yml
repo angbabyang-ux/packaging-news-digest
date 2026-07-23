@@ -1,0 +1,61 @@
+name: Send Digest Email
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'digests/*.md'
+      - 'regulation-digests/*.md'
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Find changed digest files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only HEAD^ HEAD -- 'digests/*.md' 'regulation-digests/*.md')
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FILES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Send an email per changed file
+        if: steps.changed.outputs.files != ''
+        run: |
+          set -e
+          RECIPIENTS="sshong@amorepacific.com,kangname@amorepacific.com,hotchoco@amorepacific.com,hyeji.kim86@amorepacific.com,SKM123@amorepacific.com,hhson@amorepacific.com,hyoon@amorepacific.com,evan_lee@amorepacific.com,innotech@amorepacific.com,kw.jeon@amorepacific.com,skchung@amorepacific.com,jam99@amorepacific.com,jinsoojeong@amorepacific.com"
+          echo "${{ steps.changed.outputs.files }}" | while IFS= read -r FILE; do
+            [ -z "$FILE" ] && continue
+            [ -f "$FILE" ] || continue
+            SUBJECT=$(head -n 5 "$FILE" | grep -m1 '^>' | sed 's/^> *//; s/^이메일 제목안: *//')
+            if [ -z "$SUBJECT" ]; then
+              SUBJECT=$(head -n1 "$FILE" | sed 's/^# *//')
+            fi
+            npx --yes marked "$FILE" > body.html
+            python3 - "$SUBJECT" "$RECIPIENTS" <<'PYEOF'
+          import sys, os, smtplib
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.text import MIMEText
+          subject = sys.argv[1]
+          recipients = sys.argv[2].split(',')
+          with open('body.html', 'r', encoding='utf-8') as f:
+              html = f.read()
+          msg = MIMEMultipart('alternative')
+          msg['Subject'] = subject
+          msg['From'] = os.environ['EMAIL_USERNAME']
+          msg['To'] = ', '.join(recipients)
+          msg.attach(MIMEText(html, 'html', 'utf-8'))
+          with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+              server.login(os.environ['EMAIL_USERNAME'], os.environ['EMAIL_PASSWORD'])
+              server.sendmail(os.environ['EMAIL_USERNAME'], recipients, msg.as_string())
+          print(f"Sent: {subject}")
+          PYEOF
+          done
+        env:
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
